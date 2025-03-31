@@ -34,7 +34,8 @@ def process_intent(intent: str, parameters: Dict[str, Any]) -> str:
         "recommend_by_director": process_director_recommendation,
         "recommend_by_actor": process_actor_recommendation,
         "recommend_by_genre": process_genre_recommendation,
-        "recommend_by_multi": process_multi_recommendation
+        "recommend_by_multi": process_multi_recommendation,
+        "recommend_by_text": process_text_recommendation
     }
     
     processor = intent_processors.get(intent)
@@ -138,3 +139,7 @@ def process_multi_recommendation(parameters: Dict[str, Any]) -> str:
     return format_recommendations(recommendations, category)
 
 # ... other processing functions ... 
+def process_text_recommendation(parameters):
+    user_input = parameters.get("text", "")
+    recommendations = recommender.recommend_by_ner(user_input)
+    return format_recommendations(recommendations, f"Recommendations based on your input: \"{user_input}\"")
