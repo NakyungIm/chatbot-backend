@@ -3,7 +3,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import List, Dict, Any
 import spacy
-from difflib import SequenceMatcher
 
 from models.entity_extractor import EntityExtractor
 
@@ -19,13 +18,14 @@ class NetflixRecommender:
         self.extractor = EntityExtractor(self.movies_df)
         
     def prepare_content_features(self):
+        """Prepare content features for similarity calculation"""
         # Combine relevant features for content-based filtering
         self.movies_df['content'] = (
             self.movies_df['description'].fillna('') + ' ' +
             self.movies_df['cast'].fillna('') + ' ' +
             self.movies_df['director'].fillna('') + ' ' +
             self.movies_df['listed_in'].fillna('')  # genres
-        )
+        ).str.lower()  # Convert to lowercase
         
         # Create TF-IDF matrix
         self.tfidf_matrix = self.tfidf.fit_transform(self.movies_df['content'])
@@ -34,15 +34,44 @@ class NetflixRecommender:
         self.content_similarity = cosine_similarity(self.tfidf_matrix)
 
     def recommend_similar_content(self, title: str, n_recommendations: int = 5) -> List[Dict]:
-        """Content-based filtering: Recommendation based on title"""
+        """Content-based recommendation based on title"""
         try:
-            # Find the index of the given title
-            idx = self.movies_df[self.movies_df['title'] == title].index[0]
+            # Ensure title is a string and convert to lowercase
+            title = str(title).lower()
+            
+            # Find movies with similar titles using flexible matching
+            matching_titles = self.movies_df[
+                self.movies_df['title'].str.lower().str.contains(title, na=False, regex=False)
+            ]
+            
+            if matching_titles.empty:
+                # Try more flexible matching
+                words = title.split()
+                for word in words:
+                    if len(word) > 3:  # Only use words longer than 3 characters
+                        matching_titles = self.movies_df[
+                            self.movies_df['title'].str.lower().str.contains(word, na=False, regex=False)
+                        ]
+                        if not matching_titles.empty:
+                            break
+            
+            if matching_titles.empty:
+                return []
+            
+            # Get the first matching title's index
+            idx = matching_titles.index[0]
             
             # Get similarity scores
             sim_scores = list(enumerate(self.content_similarity[idx]))
+            
+            # Sort movies by similarity score
             sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-            sim_scores = sim_scores[1:n_recommendations+1]
+            
+            # Get top N similar movies (excluding the input movie)
+            sim_scores = [s for s in sim_scores if s[0] != idx and s[1] > 0][:n_recommendations]
+            
+            if not sim_scores:
+                return []
             
             # Get movie indices
             movie_indices = [i[0] for i in sim_scores]
@@ -50,7 +79,9 @@ class NetflixRecommender:
             # Return recommended movies
             recommendations = self.movies_df.iloc[movie_indices]
             return recommendations.to_dict('records')
-        except:
+        
+        except Exception as e:
+            print(f"Error in recommend_similar_content: {str(e)}")
             return []
 
     def recommend_by_director(self, director_name: str, n: int = 5) -> List[Dict]:
@@ -91,49 +122,124 @@ class NetflixRecommender:
         
         return rated_content.head(n_recommendations).to_dict('records')
 
-    def recommend_by_genre(self, genre: str, keyword: str = None, n_recommendations: int = 5) -> List[Dict]:
-        df = self.movies_df
-        df['listed_in'] = df['listed_in'].fillna('')  # filter NaN
-        
-        genre_filtered = df[df['listed_in'].str.contains(genre, case=False, na=False)]
-        
-        if keyword:
-            genre_filtered = genre_filtered[
-                genre_filtered['description'].str.contains(keyword, case=False, na=False)
+    def recommend_by_genre(self, genre: str, n_recommendations: int = 5) -> List[Dict]:
+        """Genre-based recommendation"""
+        try:
+            # Ensure genre is a string and convert to lowercase
+            genre = str(genre).lower()
+            
+            # Genre mapping dictionary
+            genre_mapping = {
+                'western': 'westerns',
+                'romantic': 'romantic movies',
+                'comedy': 'comedies',
+                'action': 'action & adventure',
+                'drama': 'dramas',
+                'horror': 'horror movies',
+                'documentary': 'documentaries',
+                'sci-fi': 'sci-fi & fantasy',
+                'thriller': 'thrillers',
+                'crime': 'crime tv shows',
+                'mystery': 'mysteries',
+                'fantasy': 'sci-fi & fantasy',
+                'family': 'family movies',
+                'anime': 'anime features',
+                'sports': 'sports movies',
+                'animated': 'children & family movies',
+                'animation': 'children & family movies',
+                'cartoon': 'children & family movies',
+                'kids': 'children & family movies',
+                'romance': 'romantic movies',
+                'adventure': 'action & adventure',
+                'animation': 'anime features',
+                'children': 'family movies',
+                'crime': 'crime tv shows',
+                'documentary': 'documentaries',
+                'music': 'music & musicals',
+                'reality-tv': 'reality tv',
+                'short': 'short films',
+                'talk': 'talk shows',
+                'war': 'war & politics',
+            }
+            
+            # Get the mapped genre or use original if no mapping exists
+            search_genre = genre_mapping.get(genre, genre)
+            
+            # Find content with matching genre (case-insensitive)
+            genre_content = self.movies_df[
+                self.movies_df['listed_in'].str.lower().str.contains(search_genre, na=False)
             ]
+            
+            if genre_content.empty:
+                # Try searching with original genre if mapped genre returned no results
+                genre_content = self.movies_df[
+                    self.movies_df['listed_in'].str.lower().str.contains(genre, na=False)
+                ]
+            
+            if genre_content.empty:
+                return []
+            
+            # Sort by release year (most recent first)
+            genre_content = genre_content.sort_values('release_year', ascending=False)
+            
+            return genre_content.head(n_recommendations).to_dict('records')
         
-        if genre_filtered.empty:
+        except Exception as e:
+            print(f"Error in recommend_by_genre: {str(e)}")
             return []
-        
-        return genre_filtered.sample(n=min(n_recommendations, len(genre_filtered))).to_dict('records')
 
 
     def recommend_by_multi(self, 
-                         genre: str = None, 
-                         director: str = None, 
-                         actor: str = None,
-                         rating: str = None,  # Changed from float to str
-                         n_recommendations: int = 5) -> List[Dict]:
-        """Recommendation based on multiple conditions"""
+                          genre: str = None, 
+                          director: str = None, 
+                          actor: str = None,
+                          rating: str = None,
+                          release_year: int = None,
+                          country: str = None,
+                          n_recommendations: int = 5) -> List[Dict]:
+        """Multi-criteria based recommendation"""
         filtered_df = self.movies_df.copy()
+        
+        if country:
+            # Handle common variations of country names
+            country_mapping = {
+                'indian': 'india',
+                'american': 'united states',
+                'british': 'united kingdom',
+                'korean': 'south korea',
+                'chinese': 'china',
+                'japanese': 'japan'
+            }
+            search_country = country_mapping.get(country.lower(), country.lower())
+            filtered_df = filtered_df[
+                filtered_df['country'].str.lower().str.contains(search_country, na=False)
+            ]
         
         if genre:
             filtered_df = filtered_df[
-                filtered_df['listed_in'].str.contains(genre, na=False)
+                filtered_df['listed_in'].str.contains(genre, na=False, case=False)
             ]
         if director:
             filtered_df = filtered_df[
-                filtered_df['director'].str.contains(director, na=False)
+                filtered_df['director'].str.contains(director, na=False, case=False)
             ]
         if actor:
             filtered_df = filtered_df[
-                filtered_df['cast'].str.contains(actor, na=False)
+                filtered_df['cast'].str.contains(actor, na=False, case=False)
             ]
         if rating:
             filtered_df = filtered_df[
-                filtered_df['rating'] == rating  # Changed >= operator to ==
+                filtered_df['rating'] == rating
+            ]
+        if release_year:  # Modify year filtering
+            filtered_df = filtered_df[
+                filtered_df['release_year'].astype(str).str.contains(str(release_year), na=False)
             ]
             
+        # Return empty list if no results found
+        if filtered_df.empty:
+            return []
+        
         return filtered_df.sort_values('release_year', ascending=False).head(n_recommendations).to_dict('records')
     
     def recommend_by_ner(self, message: str, n: int = 5) -> List[Dict]:
@@ -148,7 +254,7 @@ class NetflixRecommender:
                 return results
             
             results = self.recommend_by_director(person)
-            print("[DEBUG] Ner match results:", results)  # 这行很关键！！
+            print("[DEBUG] Ner match results:", results)  # This line is critical!!
             if results:
                 return results
 
