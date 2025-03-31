@@ -6,7 +6,7 @@ A FastAPI-based backend for a chatbot application.
 
 1. Create and activate virtual environment:
 ```bash
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 ```
 
@@ -24,6 +24,21 @@ fastapi dev main.py
 ```
 
 2. The API will be available at `http://localhost:8000`
+
+
+
+## Running the Application using ngrok
+1. Start the server:
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+2. In a new terminal window, start ngrok:
+```
+ngrok http 8000
+```
+
+
 
 ## API Endpoints
 
