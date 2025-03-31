@@ -2,17 +2,21 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import List, Dict, Any
+import spacy
+from difflib import SequenceMatcher
+
+from models.entity_extractor import EntityExtractor
 
 class NetflixRecommender:
     def __init__(self):
+        # Load spaCy model
+        self.nlp = spacy.load("en_core_web_sm")
+        
         # Load datasets
         self.movies_df = pd.read_csv('netflix_titles.csv')
-        
-        # Create TF-IDF vectorizer for content-based filtering
         self.tfidf = TfidfVectorizer(stop_words='english')
-        
-        # Prepare content features
         self.prepare_content_features()
+        self.extractor = EntityExtractor(self.movies_df)
         
     def prepare_content_features(self):
         # Combine relevant features for content-based filtering
@@ -49,27 +53,35 @@ class NetflixRecommender:
         except:
             return []
 
-    def recommend_by_director(self, director: str, n_recommendations: int = 5) -> List[Dict]:
-        """Recommendation based on director"""
-        # Convert to lowercase for case-insensitive matching
-        director_lower = director.lower().replace('-', ' ').strip()
-        
-        director_movies = self.movies_df[
-            self.movies_df['director'].str.lower().str.replace('-', ' ').str.contains(director_lower, na=False)
-        ].sort_values('release_year', ascending=False)
-        
-        if director_movies.empty:
-            return []
-        
-        return director_movies.head(n_recommendations).to_dict('records')
+    def recommend_by_director(self, director_name: str, n: int = 5) -> List[Dict]:
+        """Strict recommendation based on exact director name"""
+        director_name = director_name.strip().lower()
+        df_directors = self.movies_df[self.movies_df['director'].notna()]
 
-    def recommend_by_actor(self, actor: str, n_recommendations: int = 5) -> List[Dict]:
-        """Recommendation based on actor"""
-        actor_content = self.movies_df[
-            self.movies_df['cast'].str.contains(actor, na=False)
-        ].sort_values('rating', ascending=False)
+        # 1. Try exact match (case-insensitive)
+        exact_match = df_directors[
+            df_directors['director'].str.lower() == director_name
+        ]
+        print("[DEBUG] Director match results:", exact_match)
+        if not exact_match.empty:
+            return exact_match.head(n).to_dict('records')
+
+        # 2. If no match, return empty to trigger fallback
+        return []
+
+
+    def recommend_by_actor(self, actor_name: str, n: int = 5) -> List[Dict]:
+        actor_name = actor_name.strip().lower()
+        df_cast = self.movies_df[self.movies_df['cast'].notna()]
+
+        # Only return exact matches
+        exact_match = df_cast[df_cast['cast'].str.lower().str.split(', ').apply(lambda x: actor_name in [a.strip().lower() for a in x])]
+        print("[DEBUG] Actor match results:", exact_match)
+        if not exact_match.empty:
+            return exact_match.head(n).to_dict('records')
         
-        return actor_content.head(n_recommendations).to_dict('records')
+        return []
+
 
     def recommend_by_rating(self, rating: str, n_recommendations: int = 5) -> List[Dict]:
         """Recommendation based on rating (e.g., 'TV-MA', 'PG-13', 'R', etc.)"""
@@ -79,13 +91,22 @@ class NetflixRecommender:
         
         return rated_content.head(n_recommendations).to_dict('records')
 
-    def recommend_by_genre(self, genre: str, n_recommendations: int = 5) -> List[Dict]:
-        """Recommendation based on genre"""
-        genre_content = self.movies_df[
-            self.movies_df['listed_in'].str.contains(genre, na=False)
-        ].sort_values('rating', ascending=False)
+    def recommend_by_genre(self, genre: str, keyword: str = None, n_recommendations: int = 5) -> List[Dict]:
+        df = self.movies_df
+        df['listed_in'] = df['listed_in'].fillna('')  # filter NaN
         
-        return genre_content.head(n_recommendations).to_dict('records')
+        genre_filtered = df[df['listed_in'].str.contains(genre, case=False, na=False)]
+        
+        if keyword:
+            genre_filtered = genre_filtered[
+                genre_filtered['description'].str.contains(keyword, case=False, na=False)
+            ]
+        
+        if genre_filtered.empty:
+            return []
+        
+        return genre_filtered.sample(n=min(n_recommendations, len(genre_filtered))).to_dict('records')
+
 
     def recommend_by_multi(self, 
                          genre: str = None, 
@@ -114,3 +135,55 @@ class NetflixRecommender:
             ]
             
         return filtered_df.sort_values('release_year', ascending=False).head(n_recommendations).to_dict('records')
+    
+    def recommend_by_ner(self, message: str, n: int = 5) -> List[Dict]:
+        """Use extracted entities to recommend content"""
+        entities = self.extractor.extract_entities(message)
+
+        # 1. Attempt to recommend based on person's name (actor or director)
+        if entities["person"]:
+            person = entities["person"][0]
+            results = self.recommend_by_actor(person)
+            if results:
+                return results
+            
+            results = self.recommend_by_director(person)
+            print("[DEBUG] Ner match results:", results)  # 这行很关键！！
+            if results:
+                return results
+
+        # 2. Attempt to recommend based on movie/show title
+        if entities["title"]:
+            title = entities["title"][0]
+            results = self.recommend_similar_content(title)
+            if results:
+                return results
+
+        # 3. Attempt to recommend based on genre
+        if entities["genre"]:
+            genre = entities["genre"][0]
+            return self.recommend_by_genre(genre)
+
+        # 4. Fallback: custom message + random drama
+        fallback_header = [{
+            "title": "No matching recommendations found.",
+            "description": "We couldn't find any matching content based on your input. Here are some popular drama titles you might like:",
+            "release_year": ""
+        }]
+
+        # Ensure all required fields are present
+        drama_df = self.movies_df[
+            self.movies_df['listed_in'].str.contains("Drama", case=False, na=False)
+        ].dropna(subset=["title", "description", "release_year"])
+
+        # Generate recommendations safely
+        random_recs = drama_df.sample(n=min(n, len(drama_df))).apply(
+            lambda row: {
+                "title": row["title"],
+                "description": row["description"],
+                "release_year": int(row["release_year"]) if pd.notna(row["release_year"]) else ""
+            },
+            axis=1
+        ).tolist()
+
+        return fallback_header + random_recs

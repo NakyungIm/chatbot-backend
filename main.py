@@ -87,7 +87,12 @@ async def dialogflow_webhook(request: DialogflowRequest):
                 
             category = "Recommended content based on the following conditions (" + ", ".join(conditions) + ")"
             response_text = format_recommendations(recommendations, category)
-            
+        elif intent == "recommend_by_text":
+            # Flexible free-text recommendation using NER
+            user_input = parameters.get("text", "")
+            recommendations = recommender.recommend_by_ner(user_input)
+            response_text = format_recommendations(recommendations, f"Recommendations based on your input: \"{user_input}\"")
+    
         else:
             response_text = "Sorry, we couldn't find the requested recommendation feature."
             
@@ -107,12 +112,22 @@ async def dialogflow_webhook(request: DialogflowRequest):
     }
 
 def format_recommendations(recommendations: List[Dict], category: str) -> str:
-    """Format recommendation results for readability"""
+    """Format recommendation results for readability."""
     if not recommendations:
         return f"Sorry, we couldn't find any {category}."
-        
-    result = f"Here are the recommended {category}:\n\n"
+
+    # Check if the first item is a fallback message
+    if recommendations[0].get("title") == "No matching recommendations found.":
+        # Start with the fallback message's description
+        result = f"{recommendations[0].get('description', '')}\n\n"
+        # Skip the fallback item and continue formatting the rest
+        recommendations = recommendations[1:]
+    else:
+        result = f"Here are the recommended {category}:\n\n"
+
+    # Format each recommendation with title and optional release year
     for i, item in enumerate(recommendations, 1):
-        result += f"{i}. {item['title']} ({item['release_year']})\n"
-    
+        year = f" ({item['release_year']})" if item.get("release_year") else ""
+        result += f"{i}. {item['title']}{year}\n"
+
     return result

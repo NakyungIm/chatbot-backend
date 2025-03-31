@@ -46,8 +46,41 @@ def test_recommender():
     for item in multi_recs:
         print(f"- {item['title']} ({item['rating']}, {item['listed_in']})")
 
+    # 7. Test NER-based recommendation
+    print("\n7. NER-based recommendation:")
+    ner_results = recommender.recommend_by_ner("I love Tom Hanks movies")
+    for item in ner_results:
+        print(f"- {item['title']} ({item['release_year']})")
+
+def test_named_entity_extraction():
+    # Initialize the recommendation system
+    recommender = NetflixRecommender()
+    input_text = "I want something with Emma Watson"
+    result = recommender.recommend_by_ner(input_text)
+    assert "Emma Watson" in result or "Sorry" not in result
+    print("test_named_entity_extraction passed.")
+
+def test_no_entity():
+    # Initialize the recommendation system
+    recommender = NetflixRecommender()
+    input_text = "Blah blah nothing known here"
+    result = recommender.recommend_by_ner(input_text)
+    assert "Sorry" in result
+    print("test_no_entity passed.")
+
+def test_actor_recommendation_format():
+    # Initialize the recommendation system
+    recommender = NetflixRecommender()
+    input_text = "Brad Pitt"
+    result = recommender.recommend_by_ner(input_text)
+    assert result.startswith("Here are the recommended"), "Format check failed"
+    print("test_actor_recommendation_format passed.")
+
 if __name__ == "__main__":
     try:
         test_recommender()
+        test_named_entity_extraction()
+        test_no_entity()
+        test_actor_recommendation_format()
     except Exception as e:
         print(f"Error occurred: {str(e)}")
