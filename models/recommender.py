@@ -241,6 +241,7 @@ class NetflixRecommender:
     def recommend_by_ner(self, message: str, n: int = 5) -> List[Dict]:
         """Use extracted entities to recommend content"""
         entities = self.extractor.extract_entities(message)
+        print("[NER DEBUG] entities extracted:", entities)
 
         # 1. Attempt to recommend based on person's name (actor or director)
         if entities["person"]:

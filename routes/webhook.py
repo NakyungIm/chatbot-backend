@@ -142,4 +142,5 @@ def process_multi_recommendation(parameters: Dict[str, Any]) -> str:
 def process_text_recommendation(parameters):
     user_input = parameters.get("text", "")
     recommendations = recommender.recommend_by_ner(user_input)
-    return format_recommendations(recommendations, f"Recommendations based on your input: \"{user_input}\"")
+    category = f'"{user_input}"'
+    return format_recommendations(recommendations, category)
