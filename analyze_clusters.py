@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # 1. Load dataset
-df = pd.read_csv("netflix_titles.csv")
+df = pd.read_csv("data/raw/netflix_titles.csv")
 df = df.dropna(subset=["description"])
 
 # 2. Text feature extraction

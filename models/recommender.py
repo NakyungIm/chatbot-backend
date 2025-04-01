@@ -3,35 +3,24 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import List, Dict, Any
 import spacy
-
 from models.entity_extractor import EntityExtractor
-
+from scipy.sparse import load_npz
+import joblib
 class NetflixRecommender:
     def __init__(self):
         # Load spaCy model
         self.nlp = spacy.load("en_core_web_sm")
         
-        # Load datasets
-        self.movies_df = pd.read_csv('netflix_titles.csv')
-        self.tfidf = TfidfVectorizer(stop_words='english')
-        self.prepare_content_features()
-        self.extractor = EntityExtractor(self.movies_df)
-        
-    def prepare_content_features(self):
-        """Prepare content features for similarity calculation"""
-        # Combine relevant features for content-based filtering
-        self.movies_df['content'] = (
-            self.movies_df['description'].fillna('') + ' ' +
-            self.movies_df['cast'].fillna('') + ' ' +
-            self.movies_df['director'].fillna('') + ' ' +
-            self.movies_df['listed_in'].fillna('')  # genres
-        ).str.lower()  # Convert to lowercase
-        
-        # Create TF-IDF matrix
-        self.tfidf_matrix = self.tfidf.fit_transform(self.movies_df['content'])
+        # Load preprocessed dataset
+        self.movies_df = pd.read_csv('./data/processed/processed_netflix_titles.csv')
+        self.tfidf_matrix = load_npz('./data/processed/tfidf_matrix.npz')
+        self.tfidf = joblib.load('./data/processed/tfidf_vectorizer.joblib')
         
         # Calculate similarity matrix
         self.content_similarity = cosine_similarity(self.tfidf_matrix)
+        
+        self.extractor = EntityExtractor(self.movies_df)
+    
 
     def recommend_similar_content(self, title: str, n_recommendations: int = 5) -> List[Dict]:
         """Content-based recommendation based on title"""
@@ -165,15 +154,19 @@ class NetflixRecommender:
             # Get the mapped genre or use original if no mapping exists
             search_genre = genre_mapping.get(genre, genre)
             
-            # Find content with matching genre (case-insensitive)
+            # Use the genres list column instead of listed_in
             genre_content = self.movies_df[
-                self.movies_df['listed_in'].str.lower().str.contains(search_genre, na=False)
+                self.movies_df['genres'].apply(
+                    lambda x: any(search_genre in g.lower() for g in eval(x))
+                )
             ]
             
             if genre_content.empty:
                 # Try searching with original genre if mapped genre returned no results
                 genre_content = self.movies_df[
-                    self.movies_df['listed_in'].str.lower().str.contains(genre, na=False)
+                    self.movies_df['genres'].apply(
+                        lambda x: any(genre in g.lower() for g in eval(x))
+                    )
                 ]
             
             if genre_content.empty:
@@ -216,8 +209,11 @@ class NetflixRecommender:
             ]
         
         if genre:
+            # Use the genres list column
             filtered_df = filtered_df[
-                filtered_df['listed_in'].str.contains(genre, na=False, case=False)
+                filtered_df['genres'].apply(
+                    lambda x: any(genre.lower() in g.lower() for g in eval(x))
+                )
             ]
         if director:
             filtered_df = filtered_df[
@@ -231,7 +227,7 @@ class NetflixRecommender:
             filtered_df = filtered_df[
                 filtered_df['rating'] == rating
             ]
-        if release_year:  # Modify year filtering
+        if release_year:
             filtered_df = filtered_df[
                 filtered_df['release_year'].astype(str).str.contains(str(release_year), na=False)
             ]
